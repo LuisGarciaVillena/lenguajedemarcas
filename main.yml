@@ -1,55 +1,78 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Grupo de Seguridad y plantilla
+Description: Plantilla LAMP
 Parameters:
   EC2InstanceType:
     Type: String
     Default: "t2.small"
-    AllowedValues: ["t2.nano", "t2.micro", "t2.small", "t2.medium", "t2.large"]
+    AllowedValues:
+      - "t2.nano"
+      - "t2.micro"
+      - "t2.small"
+      - "t2.medium"
+      - "t2.large"
   EC2AMI:
-    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
 Resources:
   WebSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Trafico HTTP, HTTPS y SSH
-      GroupName: WebSecurityGroup
+      GroupDescription: Grupo de Seguridad
+      GroupName: GrupoSeguridad
+      SecurityGroupIngress:
+        - IpProtocol: TCP
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: TCP
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: TCP
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
       Tags:
         - Key: "Name"
           Value: !Join ["-", [!Ref "AWS::StackName", !Ref "AWS::AccountId"]]
-      SecurityGroupIngress:
-      - IpProtocol: TCP
-        FromPort: 22
-        ToPort: 22
-        CidrIp: 0.0.0.0/0
-      - IpProtocol: TCP
-        FromPort: 80
-        ToPort: 80
-        CidrIp: 0.0.0.0/0
-      - IpProtocol: TCP
-        FromPort: 443
-        ToPort: 443
-        CidrIp: 0.0.0.0/0
   WordPressServer:
+    CreationPolicy:
+        ResourceSignal:
+          Timeout: PT7M
+          Count: 1
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-0aa2b7722dc1b5612
+      ImageId: !Ref EC2AMI
       InstanceType: !Ref EC2InstanceType
       KeyName: vockey
       IamInstanceProfile: LabInstanceProfile
       SecurityGroupIds: 
-        - !Ref WebSecurityGroup
+        - Ref: SecurityGroup
+      UserData:
+            Fn::Base64: !Sub |
+              #!/bin/bash -xe
+              sudo dnf update && sudo dnf upgrade -y
+              sudo dnf install httpd -y && sudo service httpd start
+              sudo systemctl enable httpd
+              sudo dnf install mariadb105-server -y && sudo service mariadb start
+              sudo service mariadb start
+              sudo systemctl enable mariadb
+              sudo dnf install php php-devel -y
+              echo "<?php phpinfo();?>" | sudo tee /var/www/html/phpinfo.php &>/dev/null
+              /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WordPressServer --region ${AWS::Region}
       Tags:
-        - Key: Name
+        - Key: "Name"
           Value: !Join ["-", [!Ref "AWS::StackName", !Ref "AWS::AccountId"]]
 Outputs:
-  InstanceID:
-    Description: The Instance ID
-    Value: !Ref WordPressServer
-    Export:
-      Name: InstanceId
+  InstanceId:
+    Description: "Id para la Instancia de EC2"
+    Value: AWS::StackId
+    Export: 
+      Name: Outputs
   ServerPublicIp:
-    Description: jkasjajas
-    Value: !Sub "http://${WordpressServer.PublicDnsName}:80"
+    Description: "DNS"
+    Value: !Sub 
+        - 'http::\\.${Domain}:80'
+        - Domain: !GetAtt WordPressServer.PublicDnsName
     Export:
       Name: ServerPublicIp
