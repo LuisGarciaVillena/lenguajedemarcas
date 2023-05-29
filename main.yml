@@ -15,7 +15,6 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id
 
-
 WordpressDB:
   Type: AWS::RDS::DBInstance
   Properties:
@@ -29,6 +28,31 @@ WordpressDB:
     MasterUserPassword: luiswordpresspassword  # Contraseña del usuario maestro de la base de datos
     VPCSecurityGroups:
       - !GetAtt InstanceSecurityGroup.GroupId  # Grupo de seguridad de VPC asociado a la base de datos
+
+    DeletionPolicy: Retain
+    # Retener la instancia de la base de datos al actualizarla o reemplazarla
+    UpdateReplacePolicy: Retain
+    # Habilitar la protección de eliminación para la instancia de la base de datos
+    DeletionProtection: true
+      Properties:
+        DatabaseName: WordpressDatabase
+        Engine: mariadb
+        EngineVersion: "10.6.10"
+        MasterUsername: luiswordpress
+        MasterUserPassword: luiswordpresspassword
+        VPCSecurityGroups:
+          - !GetAtt InstanceSecurityGroup.GroupId
+        InitializationSql: |
+          # Asegurarse de que NADIE pueda acceder al servidor sin una contraseña
+          mysql -e "UPDATE mysql.user SET Password = PASSWORD('CHANGEME') WHERE User = 'root'"
+          # Eliminar los usuarios anónimos
+          mysql -e "DROP USER ''@'localhost'"
+          # Debido a que nuestro nombre de host varía, usaremos un truco de Bash aquí
+          mysql -e "DROP USER ''@'$(hostname)'"
+          # Eliminar la base de datos de demostración
+          mysql -e "DROP DATABASE test"
+          # Hacer que nuestros cambios surtan efecto
+          mysql -e "FLUSH PRIVILEGES"
 
 
 Resources:
