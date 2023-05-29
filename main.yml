@@ -1,78 +1,132 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Plantilla LAMP
+
 Parameters:
   EC2InstanceType:
+    Description: "Seleccione el tipo de instancia"  # Descripción del parámetro EC2InstanceType
     Type: String
-    Default: "t2.small"
+    Default: t2.micro
     AllowedValues:
-      - "t2.nano"
-      - "t2.micro"
-      - "t2.small"
-      - "t2.medium"
-      - "t2.large"
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
   EC2AMI:
-    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+
+
+WordpressDB:
+  Type: AWS::RDS::DBInstance
+  Properties:
+    DBInstanceIdentifier: LuisDatabase  # Identificador para la instancia de la base de datos
+    DBName: WordpressDatabase  # Nombre de la base de datos de WordPress
+    AllocatedStorage: 20  # Tamaño de almacenamiento asignado para la base de datos
+    DBInstanceClass: db.t3.micro  # Clase de instancia de la base de datos
+    Engine: mariadb  # Motor de base de datos utilizado (MariaDB)
+    EngineVersion: "10.6.10"  # Versión del motor de base de datos
+    MasterUsername: luiswordpress  # Nombre de usuario maestro para la base de datos
+    MasterUserPassword: luiswordpresspassword  # Contraseña del usuario maestro de la base de datos
+    VPCSecurityGroups:
+      - !GetAtt InstanceSecurityGroup.GroupId  # Grupo de seguridad de VPC asociado a la base de datos
+
+
 Resources:
-  WebSecurityGroup:
+  InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Grupo de Seguridad
-      GroupName: GrupoSeguridad
+      GroupName: WebServerSecurityGroup  # Nombre del grupo de seguridad
+      GroupDescription: "Grupo de seguridad interno para la pila ${AWS::StackName}"  # Descripción del grupo de seguridad
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'AWS::StackName', !Ref 'AWS::AccountId'] ]  # Etiqueta del grupo de seguridad con el nombre de la pila y la ID de la cuenta de AWS
       SecurityGroupIngress:
-        - IpProtocol: TCP
+        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: TCP
+          CidrIp: 0.0.0.0/0  # Permitir el tráfico SSH desde cualquier dirección IP
+        - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: TCP
+          CidrIp: 0.0.0.0/0  # Permitir el tráfico HTTP desde cualquier dirección IP
+        - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: "Name"
-          Value: !Join ["-", [!Ref "AWS::StackName", !Ref "AWS::AccountId"]]
-  WordPressServer:
-    CreationPolicy:
-        ResourceSignal:
-          Timeout: PT7M
-          Count: 1
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: !Ref EC2AMI
-      InstanceType: !Ref EC2InstanceType
-      KeyName: vockey
-      IamInstanceProfile: LabInstanceProfile
-      SecurityGroupIds: 
-        - Ref: SecurityGroup
-      UserData:
-            Fn::Base64: !Sub |
-              #!/bin/bash -xe
-              sudo dnf update && sudo dnf upgrade -y
-              sudo dnf install httpd -y && sudo service httpd start
-              sudo systemctl enable httpd
-              sudo dnf install mariadb105-server -y && sudo service mariadb start
-              sudo service mariadb start
-              sudo systemctl enable mariadb
-              sudo dnf install php php-devel -y
-              echo "<?php phpinfo();?>" | sudo tee /var/www/html/phpinfo.php &>/dev/null
-              /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WordPressServer --region ${AWS::Region}
-      Tags:
-        - Key: "Name"
-          Value: !Join ["-", [!Ref "AWS::StackName", !Ref "AWS::AccountId"]]
+          CidrIp: 0.0.0.0/0  # Permitir el tráfico HTTPS desde cualquier dirección IP
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0  # Permitir el tráfico MySQL desde cualquier dirección IP
+
+
+WordpressServerLuis:
+  Type: AWS::EC2::Instance
+  Properties:
+    InstanceType: !Ref EC2InstanceType  # Tipo de instancia EC2 seleccionado a través del parámetro EC2InstanceType
+    ImageId: ami-0889a44b331db0194  # ID de la imagen de Amazon Machine Image (AMI) utilizada para la instancia
+    IamInstanceProfile: LabInstanceProfile  # Perfil de IAM asignado a la instancia
+    SecurityGroupIds:
+      - !Ref InstanceSecurityGroup  # ID del grupo de seguridad asignado a la instancia
+    KeyName: vockey  # Nombre de la clave de SSH utilizada para acceder a la instancia
+    UserData:  # Script de inicio personalizado para configurar la instancia
+      Fn::Base64: !Sub |
+        #!/bin/bash -xe
+
+        # Instalar httpd
+        sudo dnf update && sudo dnf upgrade -y
+        sudo dnf install httpd -y && sudo service httpd start
+        sudo systemctl enable httpd
+
+        # Instalar MySQLServer
+        sudo dnf install mariadb105-server -y
+
+        # Instalar PHP
+        sudo dnf install php php-devel -y
+
+        # Crear archivo phpinfo
+        echo "<?php phpinfo();?>" | sudo tee /var/www/html/phpinfo.php &>/dev/null
+
+        # Instalar los demás paquetes para WordPress
+        sudo dnf install wget php-mysqlnd php-fpm php-mysqli php-json -y
+
+        # Descargar y extraer WordPress
+        su ec2-user
+        cd /home/ec2-user
+        wget https://wordpress.org/latest.tar.gz && tar -xzf latest.tar.gz
+        sudo chown -R ec2-user:ec2-user wordpress
+
+        # Configuración de la base de datos
+        cd wordpress
+
+        # Editar el archivo wp-config.php
+        cp wp-config-sample.php wp-config.php
+        sed -i 's/database_name_here/WordpressDatabase/' wp-config.php
+        sed -i 's/username_here/wordpressuser/' wp-config.php
+        sed -i 's/password_here/pass1234$/' wp-config.php
+        sed -i 's/localhost/${WordpressDB.Endpoint.Address}/' wp-config.php
+
+        # Copiar los archivos de WordPress al directorio raíz del servidor web
+        cd /home/ec2-user
+        sudo cp -r wordpress/* /var/www/html/
+
+        # Ajustar permisos y propiedad
+        sudo chown -R apache:apache /var/www
+        sudo chmod 2775 /var/www
+
+        # Reiniciar los servicios
+        sudo systemctl restart httpd
+        sudo systemctl restart mariadb
+
+
 Outputs:
   InstanceId:
-    Description: "Id para la Instancia de EC2"
-    Value: AWS::StackId
-    Export: 
-      Name: Outputs
-  ServerPublicIp:
-    Description: "DNS"
-    Value: !Sub 
-        - 'http::\\.${Domain}:80'
-        - Domain: !GetAtt WordPressServer.PublicDnsName
-    Export:
-      Name: ServerPublicIp
+    Description: "ID de la instancia"
+    Value: !Ref WordpressServerLuis  # Hace referencia al recurso 'WordpressServerLuis' para obtener su ID
+  ServerPublicIP:
+    Description: "URL pública del servidor"
+    Value: !Sub "http://${WordpressServerLuis.PublicDnsName}:80"
+    # Utiliza la función !Sub para sustituir dinámicamente el nombre de dominio público de WordpressServerLuis y el puerto 80 en la URL
+  DBEndpoint:
+    Description: "Endpoint de la base de datos"
+    Value: !Sub "${WordpressDB.Endpoint.Address}"
+    # Utiliza la función !Sub para obtener dinámicamente la dirección de endpoint de la base de datos desde el recurso WordpressDB
